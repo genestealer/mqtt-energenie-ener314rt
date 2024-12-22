@@ -1,0 +1,26 @@
+
+    {
+    "id": "TARGET_TEMP_DELTA",
+    "component": "sensor",
+    "stat_t": "~@/state",
+    "config": {
+        "dev_cla": "temperature",
+        "unit_of_meas": "°C",
+        "val_tpl": "{{ (TEMPERATURE | float) - (TARGET_TEMP) | float)) | round(2) }}"
+       }
+    },
+
+
+
+    {
+       "id": "HEAT_DEMANDED",
+       "component": "binary_sensor",
+       "stat_t": "~@/state",
+       "config": {
+           "val_tpl": "{% if (TEMPERATURE | float) <= (TARGET_TEMP) | float) %} true {% else %} false {% endif %}",
+           "dev_cla": "running"
+       }
+    },
+
+    "value_template": "{{ (states('sensor.mqtt_sensor1')|float + states('sensor.mqtt_sensor2')|float) / 2 }}",
+    "val_tpl": "{{ (TEMPERATURE | float) - (TARGET_TEMP) | float)) | round(2) }}"
