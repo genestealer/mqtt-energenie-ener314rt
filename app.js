@@ -683,6 +683,56 @@ forked.on("message", msg => {
 					case 'THERMOSTAT_MODE':
 					case 'HYSTERESIS':
 					case 'TEMP_OFFSET':
+
+
+
+
+					case 'TEMPERATURE': {
+						log.info('TEMPERATURE monitor message received: %j', msg);
+					
+						const targetTempTopic = `${CONFIG.topic_stub}${msg.productId}/${msg.deviceId}/TARGET_TEMP/state`;
+					
+						log.info('Requesting TARGET_TEMP from MQTT: %s', targetTempTopic);
+					
+						client.subscribe(targetTempTopic, { qos: 1 }, (err) => {
+							if (err) {
+								log.error('Error subscribing to TARGET_TEMP topic: %j', err);
+								return;
+							}
+					
+							client.on('message', (topic, targetMsg) => {
+								if (topic === targetTempTopic) {
+									const targetTemp = parseFloat(targetMsg);
+									const currentTemp = parseFloat(msg.TEMPERATURE);
+									log.info('targetTemp', targetTemp);
+									log.info('currentTemp', currentTemp);
+					
+									const hvacAction = currentTemp <= targetTemp ? 'heating' : 'idle';
+									const deltaTemp = (currentTemp - targetTemp).toFixed(2); // Convert to string with two decimal places
+									log.info('hvacAction', hvacAction);
+									log.info('deltaTemp', deltaTemp);
+					
+									const hvacTopic = `${CONFIG.topic_stub}${msg.productId}/${msg.deviceId}/HVAC_ACTION/state`;
+									const deltaTempTopic = `${CONFIG.topic_stub}${msg.productId}/${msg.deviceId}/DELTA_TEMP/state`;
+					
+									log.info('Publishing HVAC_ACTION: %s to %s', hvacAction, hvacTopic);
+									log.info('Publishing delta_temp: %s to %s', deltaTemp, deltaTempTopic);
+					
+									client.publish(hvacTopic, hvacAction, { retain: true });
+									client.publish(deltaTempTopic, deltaTemp.toString(), { retain: true }); // Explicitly convert to string
+									client.unsubscribe(targetTempTopic); // Unsubscribe to avoid redundant listeners
+								}
+							});
+						});
+					
+						break;
+					}
+					
+
+
+
+
+
 					case 'HUMID_OFFSET':
 						// These values need to be retained on MQTT as they are irregularly reported
 						retain = true;
