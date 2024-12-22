@@ -1,0 +1,17 @@
+[Unit]
+Description=Energenie ener314rt MQTT client
+Documentation=https://github.com/Achronite/mqtt-energenie-ener314rt
+After=network.target
+
+[Service]
+Environment=
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/mqtt-energenie-ener314rt
+ExecStart=/usr/bin/node app.js
+Restart=on-failure
+StartLimitBurst=3
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
