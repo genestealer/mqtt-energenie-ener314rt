@@ -37,7 +37,7 @@ const VALVE_STATE 		= 165;
 const DIAGNOSTICS 		= 166;
 const THERMOSTAT_MODE   = 170;  // Thermostat
 const IDENTIFY			= 191;
-const REPORTING_INTERVAL= 210;
+const REPORT_PERIOD     = 210;
 const TARGET_TEMP 		= 244;
 const VOLTAGE 			= 226;
 const SWITCH_STATE    	= 243;
@@ -100,7 +100,7 @@ log.info('MQTT', "connecting to broker %s", CONFIG.mqtt_broker);
 // Add last will & testament message to set offline on disconnect
 const availability_topic = `${CONFIG.topic_stub}availability/state`
 var mqtt_options = CONFIG.mqtt_options;
-mqtt_options.will = { topic: availability_topic,  payload: 'offline', qos: 1, retain: true };
+mqtt_options.will = { topic: availability_topic,  payload: 'offline', retain: true };
 
 var client = MQTT.connect(CONFIG.mqtt_broker,mqtt_options);
 
@@ -112,7 +112,7 @@ client.on('connect',function(){
 	// Subscribe to incoming commands
 	var options={
 		retain:true,
-		qos:1};
+		qos:0};
 	
 	var cmd_topic= MQTT_SUBTOPIC;
 	client.subscribe(cmd_topic,options, function( err ) {
@@ -125,7 +125,7 @@ client.on('connect',function(){
 
 	// set availability to online (offline is handled by LWT - see .connect )
 	log.http('MQTT', "setting availability topic %s to 'online'", availability_topic);
-	client.publish(availability_topic, 'online', { qos: 1, retain: true });
+	client.publish(availability_topic, 'online', { retain: true });
 
 	// set initialisation time
 	var d = new Date();
@@ -135,7 +135,7 @@ client.on('connect',function(){
 
 	publishLatestRelease();
 
-	// Enable Periodic MQTT discovery at 1 min, and then every 5 minutes
+	// Enable Periodic MQTT discovery at 1 min, and then every 10 minutes
 	if (CONFIG.monitoring && CONFIG.discovery_prefix) {
 		discovery = true;
 
@@ -149,8 +149,8 @@ client.on('connect',function(){
 		// After 1 min update MQTT discovery topics
 		setTimeout(  UpdateMQTTDiscovery, (60 * 1000));
 	
-		// Every 5 minutes update MQTT discovery topics
-		doDiscovery = setInterval(  UpdateMQTTDiscovery, (600 * 500));
+		// Every 10 minutes update MQTT discovery topics
+		doDiscovery = setInterval(  UpdateMQTTDiscovery, (600 * 1000));
 	} else {
 		log.warn('discovery', "discovery disabled");
 	}
@@ -289,7 +289,7 @@ client.on('message', function (topic, msg, packet) {
 				165 SET_VALVE_STATE 	Set valve state 0=Open, 1=Closed, 2=Auto
 				166 DIAGNOSTICS 		(DIAGNOSTICS)
 				191 IDENTIFY
-				210 REPORTING_INTERVAL	300-3600 seconds
+				210 REPORT_PERIOD	300-3600 seconds
 				226 REQUEST_VOLTAGE 	Report current voltage of the batteries (VOLTAGE)
 				TEMP_SET
 			*/
@@ -358,7 +358,7 @@ client.on('message', function (topic, msg, packet) {
 					// Clear existing result in MQTT
 					stateTopic = topic.replace("command", "state");
 					log.verbose('<', "%s: null (retained)", stateTopic);
-					client.publish(stateTopic, undefined, { qos: 1, retain: true });
+					client.publish(stateTopic, undefined, { retain: true });
 					break;
 				case 'LOW_POWER_MODE':
 					otCommand = LOW_POWER_MODE;
@@ -371,10 +371,10 @@ client.on('message', function (topic, msg, packet) {
 					// Clear existing DIAGNOSTICS in MQTT
 					stateTopic = topic.replace("command", "state");
 					log.verbose('<', "%s: null (retained)", stateTopic);
-					client.publish(stateTopic, undefined, { qos: 1, retain: true });
+					client.publish(stateTopic, undefined, { retain: true });
 					break;
-				case 'REPORTING_INTERVAL':
-					otCommand = REPORTING_INTERVAL;
+				case 'REPORT_PERIOD':
+					otCommand = REPORT_PERIOD;
 					break;
 				default:
 					// unsupported command
@@ -449,8 +449,8 @@ client.on('message', function (topic, msg, packet) {
 				case 'HUMID_OFFSET':
 					otCommand = HUMID_OFFSET;
 					break;
-				case 'REPORTING_INTERVAL':		// DO NOT USE
-					otCommand = REPORTING_INTERVAL;
+				case 'REPORT_PERIOD':		// DO NOT USE
+					otCommand = REPORT_PERIOD;
 					break;
 				case 'CANCEL':
 				case 1:
@@ -568,7 +568,7 @@ forked.on("message", msg => {
 					}
 					// send response back via MQTT state topic, setting the retained flag to survive restart on client
 					log.verbose('<', "%s: %s (retained)", state_topic, rtn_msg);
-					client.publish(state_topic, rtn_msg, { qos: 1, retain: true });
+					client.publish(state_topic,rtn_msg,{retain: true});
 					break;
 
 				case 'fsk':
@@ -588,7 +588,7 @@ forked.on("message", msg => {
 
 					// send single response back via MQTT state topic
 					log.verbose('<', "%s: %s", state_topic, rtn_msg);
-					client.publish(state_topic, rtn_msg, { qos: 1});
+					client.publish(state_topic,rtn_msg);
 
 					break;
 				
@@ -677,82 +677,88 @@ forked.on("message", msg => {
 							topic_key = null;
 						break;
 					case 'VALVE_STATE':
-					case 'REPORTING_INTERVAL':
+					case 'REPORT_PERIOD':
 					case 'TARGET_TEMP':
 					case 'ERROR_TEXT':
 					case 'THERMOSTAT_MODE':
 					case 'HYSTERESIS':
 					case 'TEMP_OFFSET':
 					case 'TEMPERATURE': {
-						log.info('TEMPERATURE monitor message received: %j', msg);
-
-						if (msg.productId === 3) {
+						// Validate message productId before proceeding to check its an eTRV
+						if (msg.productId == 3) {
+							log.info('eTRV TEMPERATURE monitor received: %j', msg);
 							const targetTempTopic = `${CONFIG.topic_stub}${msg.productId}/${msg.deviceId}/TARGET_TEMP/state`;
-							log.info(`Requesting TARGET_TEMP from MQTT: ${targetTempTopic}`);
-					
-							let timeoutHandle = setTimeout(() => {
-								log.warn(`Timeout: No response received for TARGET_TEMP on topic: ${targetTempTopic}`);
-								// Handle timeout scenario (e.g., log error or take default action)
-							}, 5000); // 5-second timeout
-					
-							client.subscribe(targetTempTopic, { qos: 1 }, (err) => {
-								if (err) {
-									log.error(`Error subscribing to TARGET_TEMP topic: ${err}`);
-									clearTimeout(timeoutHandle); // Clear timeout in case of an error
-								} else {
-									log.info(`Subscribed to topic: ${targetTempTopic}`);
-					
-									client.on('message', function onTargetTempMessage(topic, targetMsg) {
-										if (topic === targetTempTopic) {
-											clearTimeout(timeoutHandle); // Clear timeout once message is received
-					
-											if (!targetMsg) {
-												log.warn(`No value received in TARGET_TEMP topic: ${targetMsg}`);
-												client.unsubscribe(targetTempTopic);
-											} else {
-												log.info(`Received TARGET_TEMP from MQTT: ${targetTempTopic}`);
-					
-												const targetTemp = parseFloat(targetMsg);
-												const currentTemp = parseFloat(msg.TEMPERATURE);
-					
-												if (isNaN(targetTemp) || isNaN(currentTemp)) {
-													log.warn(`Invalid temperature data: targetTemp=${targetTemp}, currentTemp=${currentTemp}`);
-													client.unsubscribe(targetTempTopic);
+
+							// Parse current temperature from eTRV and validate
+							const currentTemp = parseFloat(msg.TEMPERATURE);
+							if (isNaN(currentTemp)) {
+								log.warn(`eTRV TEMPERATURE Invalid current temperature data: currentTemp=${currentTemp}`);
+							} else {
+								// Set a timeout to handle cases where no response is received from MQTT, happens if no TARGET_TEMP has yet been set
+								let timeoutHandle = setTimeout(() => {
+									log.warn(`Timeout: No response received for TARGET_TEMP on topic: ${targetTempTopic}`);
+									// Unsubscribe from topic in timeout scenario
+									client.unsubscribe(targetTempTopic);
+									client.removeListener('message', onTargetTempMessage); // Ensure listener is removed on timeout
+								}, 5000);
+
+								// Subscribe to the TARGET_TEMP MQTT topic
+								log.info(`eTRV TEMPERATURE monitor requesting:`, `TARGET_TEMP from MQTT: ${targetTempTopic}`);
+								client.subscribe(targetTempTopic, { qos: 0 }, (err) => {
+									if (err) {
+										log.error(`Error subscribing to TARGET_TEMP topic: ${err}`);
+										clearTimeout(timeoutHandle);
+									} else {
+										log.info(`eTRV TEMPERATURE Subscribed to topic:`,`${targetTempTopic}`);
+
+										// Listen for messages on the subscribed topic
+										client.on('message', function onTargetTempMessage(topic, targetMsg) {
+											if (topic === targetTempTopic) {
+												// Clear the timeout as we received a message
+												clearTimeout(timeoutHandle);
+
+												if (!targetMsg) {
+													log.warn(`eTRV TEMPERATURE No value received in TARGET_TEMP topic:`,`${targetMsg}`);
 												} else {
-													log.info(`targetTemp: ${targetTemp}, currentTemp: ${currentTemp}`);
-					
-													const hvacAction = currentTemp <= targetTemp ? 'ON' : 'OFF';
-													const deltaTemp = (currentTemp - targetTemp).toFixed(2);
-					
-													log.info(`Calculated hvacAction: ${hvacAction}, deltaTemp: ${deltaTemp}`);
-					
-													const hvacTopic = `${CONFIG.topic_stub}${msg.productId}/${msg.deviceId}/HVAC_ACTION/state`;
-													const deltaTempTopic = `${CONFIG.topic_stub}${msg.productId}/${msg.deviceId}/DELTA_TEMP/state`;
-					
-													try {
-														client.publish(hvacTopic, hvacAction, { qos: 1, retain: true });
-														client.publish(deltaTempTopic, deltaTemp.toString(), { qos: 1, retain: true });
-														log.info('Published HVAC_ACTION and delta_temp successfully.');
-													} catch (publishErr) {
-														log.error(`Error publishing to MQTT: ${publishErr}`);
+													log.info(`eTRV TEMPERATURE Received`,`TARGET_TEMP from MQTT: ${targetTempTopic}`);
+
+													// Parse target temperature and validate
+													const targetTemp = parseFloat(targetMsg);
+													if (isNaN(targetTemp)) {
+														log.warn(`eTRV TEMPERATURE Invalid target temperature data: targetTemp=${targetTemp}`);
+													} else {
+														log.info(`eTRV TEMPERATURE Data:`,`TARGET_TEMP: ${targetTemp}, currentTemp: ${currentTemp}`);
+
+														// Determine HVAC action based on temperature comparison
+														const hvacAction = currentTemp <= targetTemp ? 'ON' : 'OFF';
+														const deltaTemp = (currentTemp - targetTemp).toFixed(2);
+
+														log.info(`eTRV TEMPERATURE Calculated:`,`hvacAction:`,`${hvacAction}, deltaTemp: ${deltaTemp}`);
+
+														// Define topics for publishing HVAC_ACTION and delta_temp
+														const hvacTopic = `${CONFIG.topic_stub}${msg.productId}/${msg.deviceId}/HVAC_ACTION/state`;
+														const deltaTempTopic = `${CONFIG.topic_stub}${msg.productId}/${msg.deviceId}/DELTA_TEMP/state`;
+
+														// Publish the calculated values
+														try {
+															client.publish(hvacTopic, hvacAction, { qos: 0, retain: false });
+															client.publish(deltaTempTopic, deltaTemp.toString(), { qos: 0, retain: false });
+															log.info(`eTRV TEMPERATURE Published:`,`HVAC_ACTION and delta_temp successfully.`);
+														} catch (publishErr) {
+															log.error(`eTRV TEMPERATURE Error publishing to MQTT: ${publishErr}`);
+														}
 													}
-					
-													client.unsubscribe(targetTempTopic);
 												}
+												// Unsubscribe from the topic and clean up the listener
+												client.unsubscribe(targetTempTopic);
+												client.removeListener('message', onTargetTempMessage);
 											}
-										}
-									});
-								}
-							});
-						} 
+										});
+									}
+								});
+							}
+						}
 					}
-					
-				
-				
-					
-
-
-
 					case 'HUMID_OFFSET':
 						// These values need to be retained on MQTT as they are irregularly reported
 						retain = true;
@@ -801,10 +807,10 @@ forked.on("message", msg => {
 							state = String(Math.round(charge));
 							if (retain) {
 								log.verbose('<', "%s: %s (retained)", state_topic, state);
-								client.publish(state_topic,state, { qos: 1, retain: true });
+								client.publish(state_topic,state,{retain: true});
 							} else {
 								log.verbose('<', "%s: %s", state_topic, state);
-								client.publish(state_topic,state, { qos: 1 });
+								client.publish(state_topic,state);
 							}
 						}
 
@@ -831,10 +837,10 @@ forked.on("message", msg => {
 					// send response back via MQTT state topic
 					if (retain) {
 						log.verbose('<', "%s: %s (retained)", state_topic, state);
-						client.publish(state_topic, state, { qos: 1, retain: true });
+						client.publish(state_topic,state,{retain: true});
 					} else {
 						log.verbose('<', "%s: %s", state_topic, state);
-						client.publish(state_topic, state, { qos: 1 });
+						client.publish(state_topic,state);
 					}
 
 					// Update Maintenance if retries=0 for trv
@@ -842,7 +848,7 @@ forked.on("message", msg => {
 						// retries are now empty, also change the Maintenance Select back to None
 						state_topic = `${CONFIG.topic_stub}${msg.productId}/${msg.deviceId}/Maintenance/state`;
 						log.verbose('<', "%s: None", state_topic);
-						client.publish(state_topic,"None", { qos: 1 });
+						client.publish(state_topic,"None");
 					}
 
 					// Check returned state for MIHO005 to see if switched correctly
@@ -891,7 +897,7 @@ forked.on("message", msg => {
 					state = String(msg.retries);
 					// set retries on MQTT
 					log.verbose('<', "%s: %s", state_topic, state);
-					client.publish(state_topic, state, { qos: 1 });
+					client.publish(state_topic,state);
 				}
 				
 				if (typeof(msg.otCommand) != "undefined"){
@@ -900,7 +906,7 @@ forked.on("message", msg => {
 
 					// save cached command on MQTT
 					log.verbose('<', "%s: %s", state_topic, state);
-					client.publish(state_topic, state, { qos: 1 });
+					client.publish(state_topic,state);
 				}
 
 				// Store cached state for values that are NEVER returned by monitor messages (confirmed by energenie)
@@ -910,7 +916,7 @@ forked.on("message", msg => {
 
 					// send response back via MQTT
 					log.verbose('<', "%s: %s (optimistic retained)", state_topic, state);
-					client.publish(state_topic, state, { qos: 1, retain: true });
+					client.publish(state_topic,state,{retain: true});
 				}
 				
 			};
@@ -1010,7 +1016,7 @@ function publishDiscovery( device ){
 					var discoveryTopic = `${CONFIG.discovery_prefix}${parameter.component}/ener314rt/${device.deviceId}-${parameter.id}/config`;
 
 					log.verbose('<', "discovery %s", discoveryTopic);
-					client.publish(discoveryTopic, JSON.stringify(dmsg), { qos: 1, retain: true });
+					client.publish(discoveryTopic,JSON.stringify(dmsg),{retain: true});
 
 				})
 
@@ -1048,7 +1054,7 @@ function lookupCommand( cmd, data ){
 			break;
 		case DIAGNOSTICS:
 			return 'Diagnostics';
-		case REPORTING_INTERVAL:
+		case REPORT_PERIOD:
 			command = 'Interval';
 			break;
 		case IDENTIFY:
@@ -1086,7 +1092,7 @@ function handleSignal(signal) {
 
 	// publish offline to MQTT (abnormal disconnects also set this via MQTT LWT)
 	log.info('MQTT', "setting %s to 'offline'", availability_topic);
-	client.publish(availability_topic, 'offline', { qos: 1, retain: true });
+	client.publish(availability_topic, 'offline', { retain: true });
 	publishBoardState('initialised', undefined);
 	log.info('app', "awaiting shutdown of energenie process...");
 
@@ -1179,7 +1185,7 @@ function publishBoardDiscovery(){
 				}
 
 				log.verbose('<', "discovery %s", discoveryTopic);
-				client.publish(discoveryTopic, JSON.stringify(dmsg), { qos: 1, retain: true });
+				client.publish(discoveryTopic, JSON.stringify(dmsg), { retain: true });
 
 			})
 
@@ -1195,7 +1201,7 @@ function publishBoardState(param,state) {
 	
 	// send response back via MQTT
 	log.verbose('<', "%s: %s (board)", state_topic, state);
-	client.publish(state_topic, String(state), { qos: 1 });
+	client.publish(state_topic, String(state));
 }
 
 // Get latest release data from github (uses native node.js functionality) and publish to update object for board
@@ -1214,7 +1220,7 @@ function publishLatestRelease() {
 			// Publish it to MQTT version
 			state_topic = `${CONFIG.topic_stub}board/1/version/state`;
 			log.verbose('<', "%s: %j (board)", state_topic, github_details.latest_version);
-			client.publish(state_topic, JSON.stringify(github_details), { qos: 1, retain: true });
+			client.publish(state_topic, JSON.stringify(github_details), {retain: true});
 		})
 		.catch(error => log.warn('version','error getting latest release data from github:',error)
 	); 
