@@ -24,6 +24,7 @@
             "temp_step": "0.5",
             "temp_unit": "C",
             "act_tpl": "{% if value == 'ON' %} heating {% else %} idle {% endif %}",
+            "act_t": "~HVAC_ACTION/state",
             "pr_mode_cmd_t": "~Maintenance/command",
             "pr_mode_stat_t": "~Maintenance/state",
             "pr_modes": [
@@ -63,7 +64,7 @@
          "config": {
             "ic": "mdi:compare-horizontal",
             "dev_cla": "temperature",
-            "stat_cla": "MEASUREMENT",
+            "stat_cla": "measurement",
             "unit_of_meas": "°C"
          }
       },
@@ -74,7 +75,7 @@
          "config": {
             "ic": "mdi:thermometer",
             "dev_cla": "temperature",
-            "stat_cla": "MEASUREMENT",
+            "stat_cla": "measurement",
             "unit_of_meas": "°C"
          }
       },
@@ -85,7 +86,7 @@
          "config": {
             "ic": "mdi:target",
             "dev_cla": "temperature",
-            "stat_cla": "MEASUREMENT",
+            "stat_cla": "measurement",
             "unit_of_meas": "°C"
          }
       },
@@ -96,7 +97,7 @@
          "config": {
             "ic": "mdi:battery",
             "dev_cla": "voltage",
-            "stat_cla": "MEASUREMENT",
+            "stat_cla": "measurement",
             "unit_of_meas": "V"
          }
       },
